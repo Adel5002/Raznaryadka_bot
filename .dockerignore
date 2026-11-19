@@ -1,0 +1,18 @@
+# В образ попадают только requirements.txt, bot/ и webapp/.
+# .env (токен) и data/ (база) — никогда: токен лежит в секретах Fly, база — на диске Fly.
+.env
+.env.*
+.venv
+data
+tools
+**/__pycache__
+*.pyc
+*.xlsx
+*.zip
+*.bat
+*.ps1
+*.md
+fly.toml
+Dockerfile
+.dockerignore
+.gitignore
