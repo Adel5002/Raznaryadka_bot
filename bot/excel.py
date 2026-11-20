@@ -13,7 +13,7 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
 from .config import EXCEL_SUFFIX, FIXED_ITR
-from .utils import STATUSES, day_totals, fmt_date, is_driver, parse_date, surname
+from .utils import STATUSES, day_totals, dayoff_ids, fmt_date, is_driver, parse_date, surname
 
 FONT = Font(name="Calibri", size=8)
 FONT_B = Font(name="Calibri", size=8, bold=True)
@@ -208,12 +208,15 @@ def _sheet_people(ws, dispatches: list[dict], employees: list[dict]) -> None:
     known = {e["id"] for e in employees}
     people += [(pid, snapshot_names[pid], "work", "") for pid in placed if pid not in known]
 
+    off = dayoff_ids(dispatches)
     for i, (pid, name, status, position) in enumerate(people, start=1):
         if pid in placed:
             value = " / ".join(placed[pid])
             fill = FILL_CONFLICT if len(masters_of.get(pid, ())) > 1 else None
         elif status != "work":
             value, fill = STATUSES.get(status, status), FILL_ABSENT
+        elif pid in off:
+            value, fill = "Выходной", FILL_ABSENT
         elif is_driver(position):
             value, fill = position.strip(), None  # «Водитель» (или «Водитель Ford-048» из штатки)
         else:
@@ -225,7 +228,7 @@ def _sheet_people(ws, dispatches: list[dict], employees: list[dict]) -> None:
 
     row += 1
     legend = (
-        (FILL_ABSENT, "БС / Отпуск / Межвахта / ИТР не выходит"),
+        (FILL_ABSENT, "БС / Отпуск / Межвахта / Выходной / ИТР не выходит"),
         (FILL_FREE, "На работе, но нет ни в одной разнарядке"),
         (FILL_CONFLICT, "Стоит в разнарядках у разных мастеров"),
     )

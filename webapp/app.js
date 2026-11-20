@@ -11,6 +11,8 @@ const OBJ_SEP = '━━━━━━━━━━━━━━━━'; // межд�
 const WD = ['вс', 'пн', 'вт', 'ср', 'чт', 'пт', 'сб'];
 const ABSENT = ['bs', 'otpusk', 'mezhvahta'];
 const ABSENT_TITLE = { bs: 'БС', otpusk: 'ОТПУСК', mezhvahta: 'МЕЖВАХТА' };
+// «Выходной» — не статус в штатке, а отметка только в этой разнарядке (на её дату)
+const DAYOFF_TITLE = 'ВЫХОДНОЙ';
 const UNITS = ['м', 'шт', 'м²', 'м³', 'п.м.', 'т', 'кг', 'компл.', 'л', 'слои'];
 const TECH = ['JCB', 'Автокран', 'Самосвал', 'Манипулятор', 'Экскаватор', 'Погрузчик', 'Бетононасос', 'Миксер'];
 const NOTE_PRESET = 'возможна ротация людей между объектами для оптимизации работ';
@@ -305,6 +307,10 @@ function draftFrom(data, { id = null, date = null } = {}) {
   const absent = [...absentIds].filter((aid) => isAbsent(S.emp.get(aid))).map((aid) => ({ id: aid }));
   let d = date || data.date || S.boot.default_date;
   if (d < today()) d = S.boot.default_date;
+  // выходные относятся к одной дате: при копировании на другой день не переносим
+  const dayoff = d === data.date ? cleanDayoff(data.dayoff) : [];
+  const off = new Set(dayoff);
+  objects.forEach((o) => o.plans.forEach((p) => { p.crew = p.crew.filter((pid) => !off.has(pid)); }));
   const draft = {
     v: 1, id, date: d,
     // дата отправленной разнарядки, которую правим: если дату сменить — она «переедет»
@@ -313,14 +319,26 @@ function draftFrom(data, { id = null, date = null } = {}) {
     itr_on_work: data.itr_on_work !== false,
     objects: objects.length ? objects : [emptyObject()],
     absent,
+    dayoff,
     note: data.note || '',
   };
   return { draft, removed };
 }
+/** Список выходных → id тех, кто есть в штатке и не в БС/отпуске/межвахте. */
+function cleanDayoff(list) {
+  const out = [];
+  (list || []).forEach((x) => {
+    const id = Number(typeof x === 'object' && x ? x.id : x);
+    const e = S.emp.get(id);
+    if (e && !isAbsent(e) && !out.includes(id)) out.push(id);
+  });
+  return out;
+}
+function dayoffShown(d) { return cleanDayoff(d.dayoff); }
 
 function newDraft() {
   const absent = (S.boot.absent_by_me || []).filter((id) => isAbsent(S.emp.get(id))).map((id) => ({ id }));
-  return { v: 1, id: null, orig_date: null, date: S.boot.default_date, master: S.boot.me.master_name || '', itr_on_work: true, objects: [emptyObject()], absent, note: '' };
+  return { v: 1, id: null, orig_date: null, date: S.boot.default_date, master: S.boot.me.master_name || '', itr_on_work: true, objects: [emptyObject()], absent, dayoff: [], note: '' };
 }
 function hasContent(d) {
   return !!(d && (d.note.trim() || d.objects.some((o) => o.short || o.plans.some((p) => p.crew.length || p.tech.length || p.works.some((w) => w.name.trim())))));
@@ -370,6 +388,8 @@ function buildText(d) {
     const names = shown.filter((a) => S.emp.get(a.id).status === st).map((a) => empName(a.id));
     if (names.length) { L.push('', `${ABSENT_TITLE[st]}:`); names.forEach((n) => L.push('-' + n)); }
   });
+  const off = dayoffShown(d);
+  if (off.length) { L.push('', `${DAYOFF_TITLE}:`); off.forEach((id) => L.push('-' + empName(id))); }
   if (d.note.trim()) L.push('', 'ПРИМЕЧАНИЕ:', d.note.trim());
   return L.join('\n');
 }
@@ -581,6 +601,11 @@ function viewEditor() {
       <div class="hint">Эти люди не могут стоять в плане, пока не вернёте им статус «На работе».</div>
       ${viewAbsent(d)}
     </div>
+    ${dayoffShown(d).length ? `<div class="card">
+      <b>Выходной · ${dayoffShown(d).length} чел.</b>
+      <div class="hint">Только на ${fmtDate(d.date)}. Отметить — в окне «Выбрать людей».</div>
+      <div class="chips" style="margin-top:8px">${dayoffShown(d).map((id) => `<span class="chip">${esc(empName(id))}<button class="x" data-act="dayoff-del" data-id="${id}" aria-label="Убрать выходной">×</button></span>`).join('')}</div>
+    </div>` : ''}
 
     <div class="card">
       <label class="lbl">Примечание <span class="hint">(необязательно)</span></label>
@@ -882,11 +907,17 @@ function openCrewPicker(oi, pi) {
       const sel = new Set(plan.crew);
       const other = crewElsewhere(oi, pi);
       const nq = norm(q);
+      const off = new Set(dayoffShown(S.draft));
+      const rank = (e) => (isAbsent(e) ? 2 : off.has(e.id) ? 1 : 0);
       const list = S.boot.employees.filter((e) => !nq || norm(e.full_name + ' ' + e.position).includes(nq))
-        .sort((a, b) => (isAbsent(a) - isAbsent(b)) || byName(a, b));
+        .sort((a, b) => (rank(a) - rank(b)) || byName(a, b));
       if (!S.boot.employees.length) return '<div class="empty">Штатка пуста — её заполняет администратор.</div>';
       if (!list.length) return '<div class="empty">Никого не найдено</div>';
       return list.map((e) => {
+        if (off.has(e.id)) {
+          return `<div class="pick-row off"><span class="check"></span><div class="pr-main"><div class="pr-name">${esc(e.full_name)}</div><div class="pr-sub">${esc(e.position)}</div></div>
+            <span class="status st-dayoff">Выходной</span><button class="btn btn-secondary xs" data-act="dayoff-off" data-id="${e.id}">Отменить</button></div>`;
+        }
         if (isAbsent(e)) {
           return `<div class="pick-row off"><span class="check"></span><div class="pr-main"><div class="pr-name">${esc(e.full_name)}</div><div class="pr-sub">${esc(e.position)}</div></div>
             <span class="status st-${e.status}">${esc(statusLabel(e.status))}</span><button class="btn btn-secondary xs" data-act="to-work" data-id="${e.id}">На работу</button></div>`;
@@ -895,8 +926,10 @@ function openCrewPicker(oi, pi) {
         if (other.has(e.id)) notes.push(`<span class="w">уже: ${esc(other.get(e.id))}</span>`);
         const b = S.busy[String(e.id)];
         if (b && b.length) notes.push(`<span class="w">у ${esc(b.join(', '))}</span>`);
-        return `<button class="pick-row ${sel.has(e.id) ? 'on' : ''}" data-act="toggle" data-id="${e.id}"><span class="check">${sel.has(e.id) ? '✓' : ''}</span>
-          <div class="pr-main"><div class="pr-name">${esc(e.full_name)}</div><div class="pr-sub">${[esc(e.position), ...notes].filter(Boolean).join(' · ')}</div></div></button>`;
+        // строка — div, а не button: внутри неё ещё кнопка «Выходной»
+        return `<div class="pick-row ${sel.has(e.id) ? 'on' : ''}" role="button" tabindex="0" data-act="toggle" data-id="${e.id}"><span class="check">${sel.has(e.id) ? '✓' : ''}</span>
+          <div class="pr-main"><div class="pr-name">${esc(e.full_name)}</div><div class="pr-sub">${[esc(e.position), ...notes].filter(Boolean).join(' · ')}</div></div>
+          <button class="btn btn-ghost xs dayoff-btn" data-act="dayoff-on" data-id="${e.id}">Выходной</button></div>`;
       }).join('');
     },
     foot: () => `<button class="btn btn-primary wide" data-act="sheet-close">Готово · ${S.draft.objects[oi].plans[pi].crew.length} чел.</button>`,
@@ -917,9 +950,28 @@ function openCrewPicker(oi, pi) {
         S.draft.absent = S.draft.absent.filter((a) => a.id !== e.id);
         scheduleSave();
       },
+      'dayoff-on': (el) => {
+        const id = Number(el.dataset.id);
+        setDayoff(id, true);
+        haptic('select'); scheduleSave(); refreshSheet();
+      },
+      'dayoff-off': (el) => {
+        setDayoff(Number(el.dataset.id), false);
+        haptic('select'); scheduleSave(); refreshSheet();
+      },
     },
     onClose: () => changed(true),
   });
+}
+/** Выходной на дату разнарядки: человек убирается из всех планов этого черновика. */
+function setDayoff(id, on) {
+  const d = S.draft;
+  d.dayoff = cleanDayoff(d.dayoff).filter((x) => x !== id);
+  if (on) {
+    d.dayoff.push(id);
+    const n = removeFromCrews(id);
+    if (n) toast(`${empName(id)} — выходной, убран(а) из плана`);
+  }
 }
 
 /* Техника */
@@ -1193,6 +1245,7 @@ function openReport() {
 function idx(el, k) { return Number(el.dataset[k]); }
 
 async function openEditor(draft, removed = []) {
+  if (!Array.isArray(draft.dayoff)) draft.dayoff = [];
   S.draft = draft; S.tab = 'disp'; S.view = 'editor'; S.busy = {};
   S.undo = null; S.offerClear = false; S.submitReq = null; S.saveState = '';
   render(); window.scrollTo(0, 0);
@@ -1222,7 +1275,7 @@ function setDraftDate(iso) {
 }
 function clearDraftContent() {
   S.undo = JSON.parse(JSON.stringify(S.draft));
-  S.draft.objects = [emptyObject()]; S.draft.note = ''; S.draft.itr_on_work = true;
+  S.draft.objects = [emptyObject()]; S.draft.note = ''; S.draft.itr_on_work = true; S.draft.dayoff = [];
   S.offerClear = false;
   haptic('success'); changed(true); window.scrollTo(0, 0);
 }
@@ -1257,6 +1310,7 @@ async function submit() {
   const data = {
     date: d.date, master: d.master.trim(), itr_on_work: d.itr_on_work, note: d.note,
     absent: absentShown(d).map((a) => ({ id: a.id })),
+    dayoff: dayoffShown(d).map((id) => ({ id, name: empName(id) })),
     objects: d.objects.map((o) => ({
       cipher_id: o.cipher_id, code: o.code, short: o.short, building: o.building,
       plans: o.plans.map((p) => ({
@@ -1340,7 +1394,7 @@ const ACTIONS = {
   'undo-clear': () => {
     const u = S.undo; if (!u || !S.draft) return;
     S.undo = null;
-    S.draft.objects = u.objects; S.draft.note = u.note; S.draft.itr_on_work = u.itr_on_work;
+    S.draft.objects = u.objects; S.draft.note = u.note; S.draft.itr_on_work = u.itr_on_work; S.draft.dayoff = u.dayoff || [];
     changed(true); toast('Вернул как было');
   },
   'undo-hide': () => { S.undo = null; render(); },
@@ -1408,6 +1462,7 @@ const ACTIONS = {
   'tech-del': (el) => { S.draft.objects[idx(el, 'o')].plans[idx(el, 'p')].tech.splice(idx(el, 'i'), 1); changed(true); },
   'absent-add': () => openAbsentPicker(),
   'absent-edit': (el) => openAbsentEdit(Number(el.dataset.id)),
+  'dayoff-del': (el) => { setDayoff(Number(el.dataset.id), false); changed(true); },
   'note-preset': () => { S.draft.note = NOTE_PRESET; changed(true); },
   'sugg-pick': (el) => {
     const path = el.dataset.path; setPath(S.draft, path, el.dataset.v);

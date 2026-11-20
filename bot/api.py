@@ -281,12 +281,29 @@ async def _clean_dispatch(raw: dict) -> dict:
         if e and not e["deleted"] and e["status"] in ABSENT_STATUSES:
             absent.append({"id": aid, "name": e["full_name"], "status": e["status"]})
 
+    # Выходной — только на дату этой разнарядки; в штатке статус не меняется
+    in_crew = {p["id"] for o in objects for pl in o["plans"] for p in pl["crew"]}
+    dayoff, seen_off = [], set()
+    for a in (raw.get("dayoff") or [])[:300]:
+        try:
+            aid = int(a.get("id") if isinstance(a, dict) else a)
+        except (TypeError, ValueError):
+            continue
+        e = employees.get(aid)
+        if e is None or e["deleted"] or aid in seen_off or e["status"] in ABSENT_STATUSES:
+            continue
+        if aid in in_crew:
+            raise ApiError(f'{e["full_name"]} отмечен(а) выходным и не может стоять в плане')
+        seen_off.add(aid)
+        dayoff.append({"id": aid, "name": e["full_name"]})
+
     return {
         "date": d.isoformat(),
         "master": master,
         "itr_on_work": bool(raw.get("itr_on_work", True)),
         "objects": objects,
         "absent": absent,
+        "dayoff": dayoff,
         "note": str(raw.get("note") or "").strip()[:2000],
     }
 

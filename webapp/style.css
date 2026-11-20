@@ -124,6 +124,8 @@ select.input { padding-right: 26px; background-image: linear-gradient(45deg, tra
 .st-bs { background: rgba(229, 72, 77, .14); color: var(--st-bs); }
 .st-otpusk { background: rgba(224, 148, 0, .16); color: var(--st-otpusk); }
 .st-mezhvahta { background: rgba(124, 92, 214, .15); color: var(--st-mezhvahta); }
+.st-dayoff { background: rgba(127, 127, 127, .16); color: var(--hint); }
+.pick-row .dayoff-btn { flex: none; color: var(--hint); font-weight: 500; }
 
 .chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .chips.scroll { flex-wrap: nowrap; overflow-x: auto; padding-bottom: 2px; scrollbar-width: none; }

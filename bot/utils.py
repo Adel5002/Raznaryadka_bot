@@ -63,6 +63,18 @@ def is_driver(position: str | None) -> bool:
     return "водител" in (position or "").lower()
 
 
+def dayoff_ids(dispatches: list[dict]) -> set[int]:
+    """Кому мастера поставили «Выходной» в разнарядках на этот день."""
+    ids: set[int] = set()
+    for d in dispatches:
+        for p in d["data"].get("dayoff") or []:
+            try:
+                ids.add(int(p["id"] if isinstance(p, dict) else p))
+            except (KeyError, TypeError, ValueError):
+                continue
+    return ids
+
+
 def day_totals(dispatches: list[dict], employees: list[dict]) -> dict:
     """Итоги дня — одни и те же в Excel, в подписи к нему и в мини-аппе.
 
@@ -75,7 +87,9 @@ def day_totals(dispatches: list[dict], employees: list[dict]) -> dict:
         for obj in d["data"].get("objects", []):
             for plan in obj.get("plans", []):
                 crew.update(int(p["id"]) for p in plan.get("crew", []))
-    drivers = {int(e["id"]) for e in employees if is_driver(e.get("position")) and e.get("status") == STATUS_WORK}
+    off = dayoff_ids(dispatches) - crew  # стоит в плане у другого мастера — значит, работает
+    drivers = {int(e["id"]) for e in employees
+               if is_driver(e.get("position")) and e.get("status") == STATUS_WORK and int(e["id"]) not in off}
     masters_on = sum(1 for d in dispatches if d["data"].get("itr_on_work", True))
     return {
         "itr": masters_on + len(FIXED_ITR),

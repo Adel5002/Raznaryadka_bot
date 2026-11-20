@@ -496,6 +496,11 @@ class DB:
                         label = f'{d["master_name"]} ({obj.get("short", "")})'
                         if label not in names:
                             names.append(label)
+            for p in d["data"].get("dayoff") or []:
+                names = busy.setdefault(int(p["id"]), [])
+                label = f'{d["master_name"]} (выходной)'
+                if label not in names:
+                    names.append(label)
         return busy
 
     async def absent_ids_set_by(self, tg_id: int) -> list[int]:
